@@ -1,0 +1,97 @@
+name: 'nycmesh vpn action'
+description: 'Tunnel to nyc mesh based on the vpn config'
+inputs:
+  config-name:
+    description: "Name of the config"
+    required: true
+  private-key:
+    description: "IP to ping to test tunnel"
+    required: true
+    default: '10.10.10.10'
+  server-preference:
+    description: "Comma separated list of preference"
+    required: true
+    default: '3,10,11'
+  test-ip:
+    description: "IP to ping to test tunnel"
+    required: true
+    default: '10.10.10.10'
+runs:
+  using: "composite"
+  steps:
+    - name: Checkout
+      uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # @v4
+      with:
+        repository: nycmeshnet/vpn-infra
+        path: vpn-infra
+
+    - name: Get config
+      shell: bash
+      run: |
+        sudo apt-get update && sudo apt-get install -y yq wireguard
+        echo "$WG_PRIVATE_KEY" > privatekey
+        sudo ip link add dev wg1 type wireguard
+
+        for sn in ${SERVER_PREFERENCE//,/ }; do
+          CONFIG_FILE="./vpn-infra/ansible/wireguard_sn${sn}.yaml"
+          echo "Checking for config in $CONFIG_FILE"
+          if [ "$sn" = "3" ]; then
+            SERVERIP="199.170.132.43"
+            SERVERPUBKEY="HCYsMu1Wztk8ape2WP5HYiFZnNpn07guRNvKZw/e0mk="
+          elif [ "$sn" = "10" ]; then
+            SERVERIP="23.158.16.28"
+            SERVERPUBKEY="wFQXW68D0ePLU39A1yfuIRH7oyH3ZIfb424OczjI7Ak="
+          elif [ "$sn" = "11" ]; then
+            SERVERIP="208.68.5.2"
+            SERVERPUBKEY="5wOBTSB3kH7CdZfBZAw8iomGQbS0POlmOLx2MFmzhFg="
+          fi
+          IDENTIFIED_CONFIG="$(yq ".wireguard_configs[] | select(.NAME == \"$CONFIG_NAME\")" $CONFIG_FILE)"
+          echo "Using the config:"
+          echo "$IDENTIFIED_CONFIG"
+          
+          PORT="$(yq -r ".wireguard_configs[] | select(.NAME == \"$CONFIG_NAME\") | .PORT" $CONFIG_FILE)"
+          if [ -z "$PORT" ]; then
+            echo "Port not found in config $CONFIG_NAME"
+            continue
+          fi
+
+          INTERFACE_ADDRESS="$(yq -r ".wireguard_configs[] | select(.NAME == \"$CONFIG_NAME\") | .INTERFACE_ADDRESS" $CONFIG_FILE)"
+          ip_address=$(echo $INTERFACE_ADDRESS | cut -d'/' -f1)
+          subnet=$(echo $INTERFACE_ADDRESS | cut -d'/' -f2)
+
+          # Convert the IP address to its decimal equivalent
+          ip_dec=$(echo $ip_address | awk -F'.' '{ print ($1 * 256**3) + ($2 * 256**2) + ($3 * 256) + $4 }')
+
+          # Calculate the subnet mask
+          subnet_mask=$((32 - subnet))
+
+          # Calculate the broadcast address
+          broadcast_address=$((ip_dec + 1))
+
+          # Convert the broadcast address back to dotted decimal notation
+          broadcast_ip=$(
+            echo $broadcast_address |
+            awk '{print int($1 / 256**3) "." int($1 % 256**3 / 256**2) "." int($1 % 256**2 / 256) "." int($1 % 256)}'
+          )
+
+          sudo ip address add dev wg1 "$broadcast_ip/$subnet" peer 10.0.0.0/8
+          sudo wg set wg1 listen-port 48123 private-key privatekey peer "$SERVERPUBKEY" allowed-ips 0.0.0.0/0 endpoint $SERVERIP:$PORT
+          sudo ip link set up dev wg1
+
+          ping -c 5 $TEST_IP
+          if [ $? -eq 0 ]; then
+            echo "Tunnel successfully configured"
+            exit 0
+          else
+            sudo ip link set down dev wg1
+            sudo ip link delete wg1
+          fi
+        done
+
+        echo "Failed to connect to any servers"
+        exit 1
+      env:
+        CONFIG_NAME: "${{ inputs.config-name }}"
+        SERVER_PREFERENCE: "${{ inputs.server-preference }}"
+        TEST_IP: "${{ inputs.test-ip }}"
+        WG_PRIVATE_KEY: "${{ inputs.private-key }}"
