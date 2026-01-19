@@ -23,7 +23,7 @@ A GitHub Action to establish a WireGuard VPN tunnel to NYC Mesh infrastructure b
 ```yaml
 steps:
   - name: Setup NYC Mesh VPN
-    uses: nycmeshnet/vpn-infra-action@main
+    uses: nycmeshnet/nycmesh-vpn-action@main
     with:
       config-name: "your-config-name"
       private-key: ${{ secrets.WG_PRIVATE_KEY }}
