@@ -26,7 +26,7 @@ steps:
     uses: nycmeshnet/nycmesh-vpn-action@main
     with:
       config-name: "your-config-name"
-      private-key: ${{ secrets.WG_PRIVATE_KEY }}
+      private-key: ${{ secrets.WIREGUARD_PRIVATE_KEY }}
       server-preference: "3,10,11"
       test-ip: "10.10.10.10"
 ```
